@@ -3,68 +3,57 @@ use std::io::Error;
 use std::ops::Not;
 use std::path::PathBuf;
 
-use crate::path::PathItem;
-use crate::path::PathItem::DirItem;
-use crate::path::PathItem::FileItem;
-use crate::UserSelectedFolder;
+use crate::fs::PathType::{self, DirType, FileType};
 
 pub struct WalkSummary {
-    pub path_items: Vec<PathItem>,
+    pub contained_paths: Vec<PathType>,
     pub result_files: Option<Vec<PathBuf>>,
     pub walked_dir: PathBuf,
 }
 
-fn walk_subdir(path: PathBuf) -> Vec<PathItem> {
-    let mut path_items: Vec<PathItem> = vec![];
-    path.read_dir()
-        .unwrap()
-        .filter_map(|e: Result<DirEntry, Error>| PathItem::from(e.unwrap().path()))
-        .for_each(|f: PathItem| match &f {
-            DirItem(dir_item) => {
-                if dir_item.is_empty() {
-                    path_items.push(f)
+pub fn walk(walked_dir: PathBuf) -> Result<WalkSummary, Error> {
+    let mut contained_paths: Vec<PathType> = vec![];
+    let mut result_files: Option<Vec<PathBuf>> = None;
+    let mut tmp_result_files: Vec<PathBuf> = vec![];
+    let path_items = walked_dir
+        .read_dir()?
+        .flatten()
+        .filter_map(|entry: DirEntry| PathType::from_pathbuf(entry.path()));
+    for item in path_items {
+        match &item {
+            DirType(dir) => match dir.scan()? {
+                Some(paths) => contained_paths.append(&mut walk_subdirs(paths)?),
+                None => contained_paths.push(item),
+            },
+            FileType(file) => {
+                if file.is_result_file() {
+                    tmp_result_files.push(file.path.clone())
                 } else {
-                    path_items.append(&mut walk_subdir(dir_item.path.clone()))
+                    contained_paths.push(item)
                 }
             }
-            FileItem(_) => path_items.push(f),
-        });
-    path_items
-}
-
-impl UserSelectedFolder {
-    pub fn walk_dir(&self) -> WalkSummary {
-        let walked_dir: PathBuf = self.path.clone();
-        let mut path_items: Vec<PathItem> = vec![];
-        let mut result_files: Option<Vec<PathBuf>> = None;
-        let mut tmp_result_files: Vec<PathBuf> = vec![];
-        walked_dir
-            .read_dir()
-            .unwrap()
-            .filter_map(|e: Result<DirEntry, Error>| PathItem::from(e.unwrap().path()))
-            .for_each(|f: PathItem| match &f {
-                DirItem(dir_item) => {
-                    if dir_item.is_empty() {
-                        path_items.push(f)
-                    } else {
-                        path_items.append(&mut walk_subdir(dir_item.path.clone()))
-                    }
-                }
-                FileItem(file_item) => {
-                    if file_item.is_result_file() {
-                        tmp_result_files.push(file_item.path.clone())
-                    } else {
-                        path_items.push(f)
-                    }
-                }
-            });
-        if tmp_result_files.is_empty().not() {
-            result_files = Some(tmp_result_files)
-        }
-        WalkSummary {
-            path_items,
-            result_files,
-            walked_dir,
         }
     }
+    if tmp_result_files.is_empty().not() {
+        result_files = Some(tmp_result_files)
+    }
+    Ok(WalkSummary {
+        contained_paths,
+        result_files,
+        walked_dir,
+    })
+}
+
+fn walk_subdirs(path_items: Vec<PathType>) -> Result<Vec<PathType>, Error> {
+    let mut contained_paths: Vec<PathType> = vec![];
+    for item in path_items {
+        match &item {
+            DirType(dir) => match dir.scan()? {
+                Some(paths) => contained_paths.append(&mut walk_subdirs(paths)?),
+                None => contained_paths.push(item),
+            },
+            FileType(_) => contained_paths.push(item),
+        }
+    }
+    Ok(contained_paths)
 }
