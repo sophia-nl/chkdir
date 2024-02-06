@@ -58,7 +58,6 @@
     clippy::min_ident_chars,
     clippy::missing_assert_message,
     clippy::missing_asserts_for_indexing,
-    clippy::missing_docs_in_private_items,
     clippy::missing_inline_in_public_items,
     clippy::missing_trait_methods,
     clippy::mixed_read_write_in_expression,
@@ -72,8 +71,6 @@
     clippy::panic_in_result_fn,
     clippy::partial_pub_fields,
     clippy::pattern_type_mismatch,
-    clippy::print_stderr,
-    clippy::print_stdout,
     clippy::pub_use,
     clippy::pub_with_shorthand,
     clippy::pub_without_shorthand,
@@ -91,7 +88,6 @@
     clippy::shadow_reuse,
     clippy::shadow_same,
     clippy::shadow_unrelated,
-    clippy::single_call_fn,
     clippy::single_char_lifetime_names,
     clippy::std_instead_of_alloc,
     clippy::std_instead_of_core,
@@ -118,61 +114,47 @@
     clippy::verbose_file_reads,
     clippy::wildcard_enum_match_arm
 )]
-#![allow(
-    clippy::missing_docs_in_private_items,
-    clippy::module_name_repetitions,
-    clippy::print_stderr,
-    clippy::print_stdout,
-    clippy::single_call_fn
-)]
-
-use std::env;
-use std::ffi::OsString;
-use std::io::Error;
-use std::path::PathBuf;
-use std::process;
+#![allow(clippy::module_name_repetitions)]
 
 mod args;
+mod diff;
 mod fs;
-mod result;
+mod item;
+mod last;
+mod new;
 mod walk;
 
-use args::ArgumentsResult::{HelpFlag, InvalidArguments, UserSelectDir, VersionFlag};
-use result::{CheckResult, DiffSummary};
-use walk::WalkSummary;
+use args::ArgumentsResult::{Help, InvalidArguments, UserSelectDir, Version};
 
 fn main() {
     match args::parse() {
+        Help(help) => println!("{help}"),
+        InvalidArguments(error) => error.suggestion(),
         UserSelectDir(working_dir) => {
-            let chkdir: Chkdir = Chkdir { working_dir };
-            chkdir.run().unwrap();
-        }
-        InvalidArguments(error) => error.process(),
-        HelpFlag(help) => println!("{help}"),
-        VersionFlag(version) => println!("{version}"),
-    }
-}
-
-struct Chkdir {
-    working_dir: PathBuf,
-}
-
-impl Chkdir {
-    fn run(&self) -> Result<(), Error> {
-        let walk_summary: WalkSummary = walk::walk(self.working_dir.clone())?;
-        let check_result: CheckResult = result::generate(walk_summary)?;
-        if let Some(last_result) = check_result.last {
-            let diff_summary: DiffSummary = result::diff(&last_result, &check_result.new);
-            if diff_summary.added.is_empty() && diff_summary.deleted.is_empty() {
-                println!("\x1B[1mNo change.\x1B[0m");
-                process::exit(0)
+            if let Ok(walk_result) = walk::walk(working_dir.as_path()) {
+                let new_check_result = new::create(walk_result.contents, working_dir.as_path());
+                last::find(&walk_result.result_files).map_or_else(
+                    || {
+                        new_check_result.write(&working_dir);
+                        println!("\x1B[1mThe first check is done.\x1B[0m");
+                    },
+                    |last_check_result| {
+                        let diff_result = diff::diff(&last_check_result, &new_check_result);
+                        if diff_result.added.is_empty() && diff_result.deleted.is_empty() {
+                            println!("\x1B[1mNo change.\x1B[0m");
+                        } else {
+                            new_check_result.write(&working_dir);
+                            diff_result.print();
+                        }
+                    },
+                );
+            } else {
+                eprintln!(
+                    "\x1B[91;1merror\x1B[0;1m:\x1B[0m \"\x1B[0;1m{}\x1B[0m\" can not be read.",
+                    working_dir.display()
+                );
             }
-            let _: Result<(), Error> = check_result.new.write(self.working_dir.clone());
-            diff_summary.print();
-        } else {
-            let _: Result<(), Error> = check_result.new.write(self.working_dir.clone());
-            println!("\x1B[1mThe first check is done.\x1B[0m");
         }
-        Ok(())
+        Version(version) => println!("{version}"),
     }
 }

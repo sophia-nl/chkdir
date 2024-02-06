@@ -1,59 +1,76 @@
+use core::ops::Not;
 use std::fs::DirEntry;
 use std::io::Error;
-use std::ops::Not;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use self::WalkEntry::{CommonFile, EmptyDir, UnavailableDir};
 use crate::fs::PathType::{self, DirType, FileType};
 
-pub struct WalkSummary {
-    pub contained_paths: Vec<PathType>,
-    pub result_files: Option<Vec<PathBuf>>,
-    pub walked_dir: PathBuf,
+pub enum WalkEntry {
+    CommonFile(PathBuf),
+    EmptyDir(PathBuf),
+    UnavailableDir(PathBuf),
 }
 
-pub fn walk(walked_dir: PathBuf) -> Result<WalkSummary, Error> {
-    let mut contained_paths: Vec<PathType> = vec![];
+pub struct WalkResult {
+    pub contents: Vec<WalkEntry>,
+    pub result_files: Option<Vec<PathBuf>>,
+}
+
+fn walk_subdirs(path_types: Vec<PathType>) -> Vec<WalkEntry> {
+    let mut contents: Vec<WalkEntry> = vec![];
+    for path_type in path_types {
+        match path_type {
+            DirType(dir) => match dir.scan() {
+                Ok(path_types_option) => match path_types_option {
+                    Some(inner_path_types) => contents.append(&mut walk_subdirs(inner_path_types)),
+                    None => contents.push(EmptyDir(dir.path)),
+                },
+                Err(_) => contents.push(UnavailableDir(dir.path)),
+            },
+            FileType(file) => contents.push(CommonFile(file.path)),
+        }
+    }
+    contents
+}
+
+pub fn walk(path: &Path) -> Result<WalkResult, Error> {
+    let mut contents: Vec<WalkEntry> = vec![];
     let mut result_files: Option<Vec<PathBuf>> = None;
     let mut tmp_result_files: Vec<PathBuf> = vec![];
-    let path_items = walked_dir
-        .read_dir()?
-        .flatten()
-        .filter_map(|entry: DirEntry| PathType::from_pathbuf(entry.path()));
-    for item in path_items {
-        match &item {
-            DirType(dir) => match dir.scan()? {
-                Some(paths) => contained_paths.append(&mut walk_subdirs(paths)?),
-                None => contained_paths.push(item),
-            },
-            FileType(file) => {
-                if file.is_result_file() {
-                    tmp_result_files.push(file.path.clone());
-                } else {
-                    contained_paths.push(item);
+    match path.read_dir() {
+        Ok(read_dir) => {
+            let path_types = read_dir
+                .flatten()
+                .filter_map(|entry: DirEntry| PathType::from_pathbuf(entry.path()));
+            for path_type in path_types {
+                match path_type {
+                    DirType(dir) => match dir.scan() {
+                        Ok(path_types_option) => match path_types_option {
+                            Some(inner_path_types) => {
+                                contents.append(&mut walk_subdirs(inner_path_types));
+                            }
+                            None => contents.push(EmptyDir(dir.path)),
+                        },
+                        Err(_) => contents.push(UnavailableDir(dir.path)),
+                    },
+                    FileType(file) => {
+                        if file.is_result_file() {
+                            tmp_result_files.push(file.path);
+                        } else {
+                            contents.push(CommonFile(file.path));
+                        }
+                    }
                 }
             }
+            if tmp_result_files.is_empty().not() {
+                result_files = Some(tmp_result_files);
+            }
+            Ok(WalkResult {
+                contents,
+                result_files,
+            })
         }
+        Err(error) => Err(error),
     }
-    if tmp_result_files.is_empty().not() {
-        result_files = Some(tmp_result_files);
-    }
-    Ok(WalkSummary {
-        contained_paths,
-        result_files,
-        walked_dir,
-    })
-}
-
-fn walk_subdirs(path_items: Vec<PathType>) -> Result<Vec<PathType>, Error> {
-    let mut contained_paths: Vec<PathType> = vec![];
-    for item in path_items {
-        match &item {
-            DirType(dir) => match dir.scan()? {
-                Some(paths) => contained_paths.append(&mut walk_subdirs(paths)?),
-                None => contained_paths.push(item),
-            },
-            FileType(_) => contained_paths.push(item),
-        }
-    }
-    Ok(contained_paths)
 }

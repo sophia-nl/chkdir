@@ -3,12 +3,10 @@ use std::path::PathBuf;
 mod dir;
 mod file;
 
-pub use dir::DirItem;
-pub use file::FileItem;
-
 use self::PathType::{DirType, FileType};
+use dir::DirItem;
+use file::FileItem;
 
-#[derive(Clone)]
 pub enum PathType {
     DirType(DirItem),
     FileType(FileItem),
