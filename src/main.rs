@@ -1,42 +1,41 @@
-mod diff;
-mod fs;
-mod item;
-mod last;
-mod new;
-mod options;
-mod walk;
+use std::path::PathBuf;
 
-use options::ArgumentsResult::{Help, InvalidArguments, UserSelectDir, Version};
+use clap::Parser;
+
+mod cli;
+mod item;
+mod result;
+mod walk;
+use cli::Args;
+use item::Item;
+use result::new::FileWrite;
+use result::DiffResult::{Changed, NoChange};
+use result::Difference;
+use walk::{Walk, WalkResult};
 
 fn main() {
-    match options::parse() {
-        Help(help) => println!("{help}"),
-        InvalidArguments(error) => error.suggestion(),
-        UserSelectDir(working_dir) => {
-            if let Ok(walk_result) = walk::walk(working_dir.as_path()) {
-                let new_check_result = new::create(walk_result.contents, working_dir.as_path());
-                last::find(&walk_result.result_files).map_or_else(
-                    || {
-                        new_check_result.write(&working_dir);
-                        println!("\x1B[1mThe first check is done.\x1B[0m");
-                    },
-                    |last_check_result| {
-                        let diff_result = diff::diff(&last_check_result, &new_check_result);
-                        if diff_result.added.is_empty() && diff_result.deleted.is_empty() {
-                            println!("\x1B[1mNo change.\x1B[0m");
-                        } else {
-                            new_check_result.write(&working_dir);
-                            diff_result.print();
-                        }
-                    },
-                );
+    let args: Args = Args::parse();
+    let working_dir: PathBuf = args.target_directory;
+    let walk_result: WalkResult = working_dir.walk_root().unwrap();
+    match walk_result.get_last_result() {
+        Some(last_result) => {
+            let new_result: Vec<Item> = if args.quick {
+                todo!()
             } else {
-                eprintln!(
-                    "\x1B[91;1merror\x1B[0;1m:\x1B[0m \"\x1B[0;1m{}\x1B[0m\" can not be read.",
-                    working_dir.display()
-                );
+                walk_result.create_new_result(&working_dir)
+            };
+            match last_result.diff(&new_result) {
+                Changed(changed_result) => {
+                    new_result.write(&working_dir);
+                    println!("{}", changed_result)
+                }
+                NoChange => println!("\x1B[1mNo change.\x1B[0m"),
             }
         }
-        Version(version) => println!("{version}"),
+        None => {
+            let new_result: Vec<Item> = walk_result.create_new_result(&working_dir);
+            new_result.write(&working_dir);
+            println!("\x1B[1mThe first check is done.\x1B[0m");
+        }
     }
 }
