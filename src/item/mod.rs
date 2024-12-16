@@ -37,6 +37,14 @@ impl Uniform for String {
         }
         path
     }
+    #[cfg(target_os = "linux")]
+    fn uniform(&self, commonpath_len: usize) -> String {
+        let mut path: String = self.clone();
+        if let Some(sub_path) = path.get(commonpath_len..) {
+            path = format!(".{}", sub_path);
+        }
+        path
+    }
 }
 
 impl WalkEntry {

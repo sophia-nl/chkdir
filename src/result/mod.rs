@@ -32,7 +32,7 @@ impl Difference for Vec<Item> {
             }
             EmptyDirItem(last_dir_path) => {
                 last_inners.push(format!(
-                    "               empty_directory                 {}",
+                    "               empty_directory                {}",
                     last_dir_path
                 ));
             }
@@ -47,7 +47,7 @@ impl Difference for Vec<Item> {
             }
             EmptyDirItem(new_dir_path) => {
                 new_inners.push(format!(
-                    "               empty_directory                 {}",
+                    "               empty_directory                {}",
                     new_dir_path
                 ));
             }
